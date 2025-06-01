@@ -19,16 +19,20 @@ func FetchURLs(urls []string) map[string]string {
 	// client := &http.Client{ //клиент с таймаутом
 	// 	Timeout: 10 * time.Second,
 	// }
+
 	//отмена контекстом по истечении таймера
 	n := 2200 * time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), n)
 	defer cancel()
-	result := make(map[string]string)
+
+	result := make(map[string]string) //результирующая мапа
+	errorChan := make(chan error, 1)  //канал для ошибки, буфер 1
+
 	for _, url := range urls {
 		//fmt.Println(url)
 		//создадим горутину для обработки http-запроса для каждого адреса
 		wg.Add(1)
-		go func(url string) {
+		go func(url string) { //запускаются горутины по всем url
 			defer wg.Done() //по окончании уменьшаем счетчик
 
 			select {
@@ -42,6 +46,7 @@ func FetchURLs(urls []string) map[string]string {
 				// resp, err := client.Get(url)
 				req, err := http.NewRequest("GET", url, nil)
 				if err != nil {
+					errorChan <- err
 					fmt.Println("Ошибка при переборе url")
 					mu.Lock()
 					result[url] = "error"
@@ -52,8 +57,10 @@ func FetchURLs(urls []string) map[string]string {
 
 				resp, err := http.DefaultClient.Do(req)
 				if err != nil {
-					fmt.Println("Ошибка при выполнении запроса")
+					errorChan <- err
+					fmt.Println("Ошибка при выполнении запроса", req)
 					mu.Lock()
+
 					result[url] = "error"
 					mu.Unlock()
 					return
@@ -80,12 +87,21 @@ func FetchURLs(urls []string) map[string]string {
 		}(url)
 	}
 
+	go func() { //горутина, которая праллельно с остальными ищет ошибки
+		//в канале errorChan
+		for err := range errorChan {
+			fmt.Println("Ошибка из канала ошибки, отмена всех запросов", err)
+			cancel()
+		}
+	}()
+
 	wg.Wait()
+	close(errorChan)
 	return result
 }
 
 func main() {
-	urls := []string{"https://yandex.ru", "https://google.com", "https://bing.com"}
+	urls := []string{"https://dfl.main", "https://yandex.ru", "https://google.com", "https://bing.com"}
 
 	result := FetchURLs(urls)
 	for url, content := range result {
